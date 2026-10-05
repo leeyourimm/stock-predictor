@@ -12,15 +12,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 def _load_dotenv() -> None:
-    env_path = BASE_DIR / ".env"
-    if not env_path.exists():
-        return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    """키 파일 읽기. backend/.env, backend/env, 프로젝트 폴더의 env/.env 순서 (먼저 읽은 값·실제 환경변수가 우선).
+    맥 Finder 에서는 점(.)으로 시작하는 파일을 만들기 어려워 'env' 이름도 허용한다."""
+    for env_path in (BASE_DIR / ".env", BASE_DIR / "env", BASE_DIR.parent / "env", BASE_DIR.parent / ".env"):
+        if not env_path.is_file():
             continue
-        k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if v.strip().strip('"').strip("'"):
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
 _load_dotenv()
