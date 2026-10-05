@@ -144,3 +144,22 @@ def test_calibration_shrinks_to_base_rate_without_data():
     p = cal.predict_proba(c, s)
     tbl = cal.calibration_table(p, y)
     assert all(abs(b["mean_pred"] - b["actual_up_rate"]) < 0.1 for b in tbl if b["n"] > 200)
+
+
+def test_ondemand_launch_runs_and_official_final(env):
+    """앱 실행 시 분석: 실행 시각까지의 데이터만, 15:30 이후엔 생성 안 함, 같은 날 여러 번이면 마지막만 성과 집계."""
+    from app.pipeline import graded_frame, official_finals, run_ondemand
+    s, days = env
+    data = PITData.load(s)
+    T = days[130]
+    r1, _ = run_ondemand(s, datetime.combine(T, time(14, 35)), data, use_claude=False)
+    r2, _ = run_ondemand(s, datetime.combine(T, time(15, 10)), data, use_claude=False)
+    assert r1.stage == "L1435" and r2.stage == "L1510"
+    assert r1.as_of == datetime.combine(T, time(14, 35))
+    assert len(r2.summary.get("candidate_tickers", [])) <= settings.max_final_picks
+    late, msg = run_ondemand(s, datetime.combine(T, time(15, 40)), data, use_claude=False)
+    assert late is None and "15:30" in msg
+    run_grading(s, now=datetime.combine(days[131], settings.grading_time))
+    g = graded_frame(s)
+    fin = official_finals(g[g.trade_date == T])
+    assert set(fin.stage) == {"L1510"}

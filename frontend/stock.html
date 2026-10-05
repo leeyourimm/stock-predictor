@@ -12,12 +12,12 @@ const t = new URLSearchParams(location.search).get('t');
   const fac = L ? Object.entries(L.factor_scores || {}).map(([g, f]) => `<div class="card"><h3>${esc(f.label)} <b class="${f.score > 0 ? 'up' : f.score < 0 ? 'down' : ''}">${f.score > 0 ? '+' : ''}${f.score}</b></h3>
      ${f.items.map(x => `<div class="factor"><span>${esc(x.label)}${x.value != null ? ` <span class="muted">(${x.value})</span>` : ''}</span><b>${x.points > 0 ? '+' : ''}${x.points}</b></div>`).join('') || '<span class="muted">해당 신호 없음</span>'}</div>`).join('') : '';
   const kv = rows => `<table>${rows.map(([k, x]) => `<tr><td class="muted">${k}</td><td>${x}</td></tr>`).join('')}</table>`;
-  const stages = d.today_stages.map(p => `<tr><td>${STAGE_LABEL[p.stage] || p.stage}</td><td>${num(p.price, 0)}</td><td>${pct(p.p_up)}</td><td>${spct(p.expected_net_return, 2)}</td><td>${pct(p.p_gap_up, 0)}</td><td>${pct(p.p_high_hit, 0)}</td><td>${conf(p.confidence)}</td><td>${p.rank ?? '-'}</td><td>${p.is_candidate ? '<b class="up">후보</b>' : '-'}</td></tr>`).join('');
+  const stages = d.today_stages.map(p => `<tr><td>${stageLabel(p.stage)}</td><td>${num(p.price, 0)}</td><td>${pct(p.p_up)}</td><td>${spct(p.expected_net_return, 2)}</td><td>${pct(p.p_gap_up, 0)}</td><td>${pct(p.p_high_hit, 0)}</td><td>${conf(p.confidence)}</td><td>${p.rank ?? '-'}</td><td>${p.is_candidate ? '<b class="up">후보</b>' : '-'}</td></tr>`).join('');
   $('#m').innerHTML = `${synthBanner(synth)}
   <div class="card"><div class="big">${esc(i.name)} <span class="muted">${i.ticker} · ${i.market} · ${esc(i.sector || '업종 미분류')}</span></div>
     <div>거래정지: ${i.is_halted == null ? '확인 불가' : i.is_halted ? '예' : '아니오'} · 관리종목: ${i.is_admin_issue == null ? '확인 불가' : i.is_admin_issue ? '예' : '아니오'} <span class="muted">(${esc(i.status_source || '')})</span></div></div>
   ${L ? `<div class="grid">
-    <div class="card"><h3>${STAGE_LABEL[L.stage] || L.stage} 기준 · 다음 거래일(${L.target_date}) Overnight</h3>
+    <div class="card"><h3>${stageLabel(L.stage)} 기준 · 다음 거래일(${L.target_date}) Overnight</h3>
       <div class="big">상승확률 <span class="up">${pct(L.p_up)}</span> ${L.is_candidate ? '<span class="badge">매수 후보</span>' : ''}</div>
       <div>예상 수익률(종가, 비용 차감) <b>${spct(L.expected_net_return, 2)}</b> <span class="muted">(비용 전 ${spct(L.expected_return, 2)})</span></div>
       <div>예상 상승범위(장중 최대) ${rng(L.up_med, L.up_p80)} · 예상 하락범위 ${rng(L.down_med, L.down_p20)}</div>

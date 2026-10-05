@@ -17,15 +17,15 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from .backtest.engine import BacktestParams, run_backtest
 from .config import settings
 from .db import BacktestRun, engine, get_session, init_db, now_kst, verify_chain
 from .features.store import PITData
-from .pipeline import STAGE_ORDER, collect, run_day, run_grading, run_stage
+from .pipeline import STAGE_ORDER, catch_up, collect, run_day, run_grading, run_ondemand, run_stage
 from .research.feature_study import study
-from .strategy.manager import ensure_initial, load_samples, reevaluate
+from .strategy.manager import champion, ensure_initial, load_samples, reevaluate
 
 log = logging.getLogger("cli")
 
@@ -62,6 +62,7 @@ def main(argv=None):
     st = sub.add_parser("stage")
     st.add_argument("stage", choices=STAGE_ORDER)
     st.add_argument("--no-claude", action="store_true")
+    sub.add_parser("launch", help="앱 실행 시 분석: 밀린 데이터 수집·채점 → 지금 시점 분석")
     sub.add_parser("grade")
     sub.add_parser("reevaluate")
     sub.add_parser("study")
@@ -94,6 +95,8 @@ def main(argv=None):
     elif a.cmd == "stage":
         run = run_stage(session, a.stage, use_claude=not a.no_claude)
         print(run.run_id, run.summary.get("no_candidate_message") or run.summary["candidate_tickers"])
+    elif a.cmd == "launch":
+        print(cmd_launch(session))
     elif a.cmd == "grade":
         print(run_grading(session))
     elif a.cmd == "reevaluate":
@@ -115,6 +118,26 @@ def main(argv=None):
         print(verify_chain(session))
     elif a.cmd == "demo-synthetic":
         demo_synthetic(session, a.days, a.tickers, a.replay)
+
+
+def cmd_launch(session) -> str:
+    """앱을 켤 때마다: 밀린 확정 데이터 수집 → 결과 나온 예측 채점 → (7일 지났으면) 전략 재평가 → 지금 시점 분석."""
+    from sqlalchemy import func, select
+    from .db import StrategyVersion
+    g = catch_up(session)
+    log.info("데이터 갱신·채점: %s", g)
+    last = session.execute(select(func.max(StrategyVersion.created_at))).scalar()
+    ev = (champion(session).evaluation or {}).get("last_reevaluated_at") if champion(session) else None
+    ref = max([x for x in (last, datetime.fromisoformat(ev) if ev else None) if x], default=None)
+    if ref is None or now_kst() - ref >= timedelta(days=7):
+        r = reevaluate(session)
+        log.info("전략 재평가: %s — %s", r.get("status"), r.get("reason", ""))
+        ch = champion(session)
+        if ch:
+            ch.evaluation = {**(ch.evaluation or {}), "last_reevaluated_at": now_kst().isoformat()}
+            session.commit()
+    run, msg = run_ondemand(session)
+    return f"[{run.stage if run else '분석 없음'}] {msg}"
 
 
 def demo_synthetic(session, n_days: int, n_tickers: int, replay: int):

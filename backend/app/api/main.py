@@ -27,7 +27,7 @@ from ..db import (BacktestRun, CollectionLog, DailyBar, DataConflict, Disclosure
 from ..evaluation.error_analysis import aggregate
 from ..evaluation.metrics import overnight_summary, prediction_metrics
 from ..features.store import PITData
-from ..pipeline import STAGE_ORDER, STAGES, gate_edge, graded_frame
+from ..pipeline import STAGE_ORDER, STAGES, gate_edge, graded_frame, is_final, official_finals, stage_key
 from ..prediction.engine import FLAG_LABELS
 from ..prediction.model import Model
 from ..research.feature_study import study
@@ -103,7 +103,7 @@ def dashboard(trade_date: date | None = None):
         if not T:
             return {"status": "no_runs", "message": "아직 생성된 예측이 없습니다."}
         runs = s.execute(select(PredictionRun).where(PredictionRun.trade_date == T)).scalars().all()
-        runs.sort(key=lambda r: STAGE_ORDER.index(r.stage))
+        runs.sort(key=lambda r: stage_key(r.stage))
         cur = runs[-1]
         rows = s.execute(select(Prediction).where(Prediction.run_id == cur.run_id, Prediction.rank.is_not(None))
                          .order_by(Prediction.rank).limit(10)).scalars().all()
@@ -112,7 +112,7 @@ def dashboard(trade_date: date | None = None):
         ch = champion(s)
         return {
             "is_synthetic": cur.is_synthetic, "trade_date": str(T), "target_date": str(cur.target_date),
-            "stage": cur.stage, "is_final": cur.stage == settings.final_stage,
+            "stage": cur.stage, "is_final": is_final(cur.stage),
             "stages": [_run_brief(r) for r in runs],
             "stage_plan": [{"stage": k, "time": v["time"].strftime("%H:%M"), "size": v["size"] or "전체"} for k, v in STAGES.items()],
             "run": {"as_of": cur.as_of.isoformat(), "strategy_version": cur.strategy_version,
@@ -144,7 +144,7 @@ def predictions(trade_date: date | None = None, stage: str | None = None, limit:
         runs = s.execute(q.limit(10)).scalars().all()
         if not runs:
             raise HTTPException(404, "해당 예측 없음")
-        run = max(runs, key=lambda r: (r.trade_date, STAGE_ORDER.index(r.stage)))
+        run = max(runs, key=lambda r: (r.trade_date, stage_key(r.stage)))
         items = s.execute(select(Prediction, PredictionOutcome)
                           .outerjoin(PredictionOutcome, PredictionOutcome.prediction_id == Prediction.id)
                           .where(Prediction.run_id == run.run_id)
@@ -170,7 +170,12 @@ def stock(ticker: str):
                            .limit(50)).scalars().all()
         disc = s.execute(select(Disclosure).where(Disclosure.ticker == ticker).order_by(desc(Disclosure.rcept_dt))
                          .limit(30)).scalars().all()
-        final = [(p, o) for p, o in hist if p.stage == settings.final_stage]
+        final, seen = [], set()    # 거래일별 마지막 확정 분석 1건
+        for p, o in sorted(((p, o) for p, o in hist if is_final(p.stage)),
+                           key=lambda x: (x[0].trade_date, stage_key(x[0].stage)), reverse=True):
+            if p.trade_date not in seen:
+                seen.add(p.trade_date)
+                final.append((p, o))
         graded = [o for _, o in final if o]
         dec = [o for o in graded if o.result in ("SUCCESS", "FAILURE")]
         return {
@@ -197,12 +202,12 @@ def performance():
         g = graded_frame(s)
         if g.empty:
             return {"message": "채점된 예측 없음"}
-        fin = g[g.stage == settings.final_stage]
+        fin = official_finals(g)
         m = prediction_metrics(fin if not fin.empty else g)
         m["overnight"] = overnight_summary(fin, settings.max_final_picks, settings.round_trip_cost)
         m["by_stage"] = {}
-        for st in STAGE_ORDER:
-            gg = g[g.stage == st]
+        launches = g[g.stage.str.startswith("L")]
+        for st, gg in [(st, g[g.stage == st]) for st in STAGE_ORDER] + [("LAUNCH", launches)]:
             if gg.empty:
                 continue
             top = gg[gg["rank"] <= settings.max_final_picks]
@@ -240,7 +245,7 @@ def errors(limit: int = 100):
         all_err = pd.read_sql(select(ErrorLog.primary_cause, ErrorLog.tags), s.bind)
         if not all_err.empty:
             all_err["tags"] = all_err.tags.map(lambda x: x if isinstance(x, list) else json.loads(x))
-        g = graded_frame(s, settings.final_stage)
+        g = official_finals(graded_frame(s))
         return {"summary": aggregate(all_err, g) if not all_err.empty else {"n_failures": 0},
                 "items": [{"trade_date": str(e.trade_date), "ticker": e.ticker, "primary_cause": e.primary_cause,
                            "tags": e.tags, "details": e.details, "llm_explanation": e.llm_explanation} for e in rows]}
@@ -261,6 +266,28 @@ def strategies():
                         "created_at": v.created_at.isoformat(),
                         "activated_at": v.activated_at.isoformat() if v.activated_at else None})
         return out
+
+
+_analyze_lock = threading.Lock()
+
+
+@app.post("/api/analyze")
+def analyze_now():
+    """'지금 다시 분석' 버튼: 밀린 데이터 수집·채점 후 지금 시점까지의 데이터로 오늘 후보 분석 (실데이터 전용)."""
+    from ..pipeline import catch_up, run_ondemand
+    with get_session() as s:
+        last = s.execute(select(PredictionRun).order_by(desc(PredictionRun.created_at)).limit(1)).scalar()
+        if last is not None and last.is_synthetic:
+            raise HTTPException(400, "데모(합성) 데이터에서는 다시 분석을 지원하지 않습니다")
+    if not _analyze_lock.acquire(blocking=False):
+        raise HTTPException(409, "이미 분석 중입니다")
+    try:
+        with get_session() as s:
+            catch_up(s)
+            run, msg = run_ondemand(s)
+            return {"ok": run is not None, "stage": run.stage if run else None, "message": msg}
+    finally:
+        _analyze_lock.release()
 
 
 class BacktestReq(BaseModel):

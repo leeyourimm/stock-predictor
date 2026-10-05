@@ -9,7 +9,10 @@ nav('index');
   if (d.status === 'no_runs') { $('#m').innerHTML = `<div class="card">${d.message}</div>`; return; }
   const mk = d.market.values || {}, rg = d.market.regime || {}, perf = d.performance, on = perf?.overnight?.candidates, sh = perf?.overnight?.shadow_topk;
   const stageDone = Object.fromEntries(d.stages.map(s => [s.stage, s]));
-  const timeline = d.stage_plan.map(p => { const s = stageDone[p.stage]; return `<div class="card" style="margin:0;${s ? '' : 'opacity:.45'}"><h3>${STAGE_LABEL[p.stage]}</h3>
+  const launches = d.stages.filter(s => s.stage[0] === 'L');
+  const timeline = launches.length ? launches.map(s => `<div class="card" style="margin:0"><h3>${stageLabel(s.stage)}</h3>
+     <div>분석 ${s.n_universe}종목 · 자격 ${s.n_eligible}</div><div>${s.n_candidates ? `<b class="up">후보 ${s.n_candidates}종목</b>` : '<b>매수 후보 없음</b>'}</div></div>`).join('')
+    : d.stage_plan.map(p => { const s = stageDone[p.stage]; return `<div class="card" style="margin:0;${s ? '' : 'opacity:.45'}"><h3>${STAGE_LABEL[p.stage]}</h3>
      ${s ? `<div>분석 ${s.n_universe}종목 · 자격 ${s.n_eligible}</div><div>${p.stage === 'S1520' ? (s.n_candidates ? `<b class="up">후보 ${s.n_candidates}종목 확정</b>` : '<b>매수 후보 없음</b>') : `통과 ${s.n_candidates}`}</div>` : `<div class="muted">대상 ${p.size}${p.size === '전체' ? '' : '종목'} · 대기</div>`}</div>`; }).join('');
   const rows = d.top10.map(p => `<tr class="click" onclick="location='/stock.html?t=${p.ticker}'">
     <td>${p.rank}</td><td><b>${esc(p.name)}</b> <span class="muted">${p.ticker}</span></td>
@@ -18,6 +21,8 @@ nav('index');
     <td>${factorBadges(p.factor_scores, true)}</td><td>${factorBadges(p.factor_scores, false)}${p.risk_flags.filter(f => f.code !== 'STATUS_UNKNOWN').map(f => `<span class="badge">${esc(f.label)}</span>`).join('')}</td>
     <td>${p.is_candidate ? '<b class="up">매수 후보</b>' : '<span class="muted">-</span>'}</td></tr>`).join('');
   $('#m').innerHTML = `${synthBanner(d.is_synthetic)}
+  ${d.is_synthetic ? '' : `<div class="card" style="display:flex;gap:12px;align-items:center"><button id="again">지금 다시 분석</button>
+    <span class="muted" id="againMsg">앱을 켤 때마다 자동 분석합니다. 거래일 15:30 전에 실행한 분석이 그날 매수 후보가 됩니다 (같은 날 여러 번이면 마지막 실행 기준).</span></div>`}
   <div class="grid">${timeline}</div><div style="height:12px"></div>
   <div class="grid">
     <div class="card"><h3>오늘의 시장 상태</h3><div class="big"><span class="badge">${rg.trend}</span><span class="badge">${rg.vol}</span></div>
@@ -29,12 +34,17 @@ nav('index');
     <div class="card"><h3>그림자 상위${d.top10.length ? 5 : ''} (게이트 무시, 참고)</h3>${sh?.n_trades ? `<div class="big">${spct(sh.avg_net_close, 2)}</div><div class="muted">${sh.n_trades}회 · 승률 ${pct(sh.exit_close?.win_rate)} · Sharpe ${num(sh.exit_close?.sharpe)}</div>` : '<span class="muted">-</span>'}
       <div class="muted">방향 적중률(최근 20일) ${hitStr(perf?.recent_20d)} · Brier ${num(perf?.brier, 4)} / 기저 ${num(perf?.base_brier, 4)}</div></div>
   </div>
-  <div class="card"><h3>${STAGE_LABEL[d.stage]} 기준 상위 10 (기대수익 순, 대상일 ${d.target_date})</h3>
+  <div class="card"><h3>${stageLabel(d.stage)} 기준 상위 10 (기대수익 순, 대상일 ${d.target_date})</h3>
     ${d.is_final && d.no_candidate_message ? `<div class="notice">${d.no_candidate_message}</div>` : ''}
     ${!d.is_final ? `<div class="muted" style="margin-bottom:8px">아직 최종 단계 전입니다. 15:20 확정 전까지 후보는 바뀔 수 있습니다.</div>` : ''}
     <table><tr><th>#</th><th>종목</th><th>상승확률</th><th>기대수익(순)</th><th>갭상승</th><th>고가+2%</th><th>예상 상승범위</th><th>예상 하락범위</th><th>Conf</th><th>상승 근거</th><th>하락 위험</th><th></th></tr>${rows}</table>
     <div class="muted" style="margin-top:8px">왕복 비용 ${pct(d.costs.round_trip, 2)} 반영 (수수료 ${d.costs.fee_bps}bp×2, 세금 ${d.costs.tax_bps}bp, 슬리피지 ${d.costs.slippage_bps}bp×2). 상승/하락 범위 = 다음날 장중 최대 상승·하락 (중앙값 ~ 80/20분위).</div></div>
   <div class="card"><h3>최근 거래일별 방향 적중률 (최종 단계)</h3><canvas id="c1"></canvas></div>`;
+  $('#again')?.addEventListener('click', async () => {
+    $('#again').disabled = true; $('#againMsg').textContent = '분석 중… (데이터 갱신 포함, 잠시 걸릴 수 있음)';
+    try { const r = await api('/api/analyze', {method: 'POST'}); $('#againMsg').textContent = r.message; if (r.ok) setTimeout(() => location.reload(), 1200); }
+    catch (e) { $('#againMsg').textContent = e.message; } finally { $('#again').disabled = false; }
+  });
   if (perf?.daily?.length) {
     const days = perf.daily.slice(-20);
     new Chart($('#c1'), {type: 'bar', data: {labels: days.map(x => x.date), datasets: [{label: '방향 적중률', data: days.map(x => x.hit_rate), backgroundColor: css('--accent')}]}, options: {scales: {y: {min: 0, max: 1}}}});

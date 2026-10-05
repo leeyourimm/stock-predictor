@@ -16,6 +16,7 @@ function hitStr(h) { return !h || h.hit_rate == null ? '<span class="muted">표�
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
 const STAGE_LABEL = {S1400: '14:00 1차 분석', S1430: '14:30 재평가', S1500: '15:00 압축', S1510: '15:10 최종 분석', S1520: '15:20 후보 확정'};
+const stageLabel = s => STAGE_LABEL[s] || (s && s[0] === 'L' ? `${s.slice(1, 3)}:${s.slice(3)} 실행 분석` : s);
 const rng = (a, b) => `${spct(a)} ~ ${spct(b)}`;
 function factorBadges(fs, positive) {
   const items = Object.values(fs || {}).flatMap(g => g.items || []).filter(i => i.points && (i.points > 0) === positive).sort((a, b) => Math.abs(b.points) - Math.abs(a.points)).slice(0, 3);

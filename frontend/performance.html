@@ -31,7 +31,7 @@ const calChart = (id, rows, ylab) => new Chart($(id), {type: 'scatter', data: {d
       <div class="muted">갭상승 Brier ${num(p.gap_brier, 4)} · 고가+2% Brier ${num(p.hit_brier, 4)}</div></div>
     <div class="card"><h3>예상 vs 실제 (종가 수익률)</h3><div>전체 ${spct(p.avg_expected_return, 2)} vs ${spct(p.avg_actual_return, 2)}</div><div>TOP10 ${spct(p.top10_avg_expected_return, 2)} vs ${spct(p.top10_avg_actual_return, 2)}</div><div class="muted">TOP10 최대 손실 ${spct(p.max_loss_top10, 2)} · 후보 최대 손실 ${spct(p.max_loss_candidates, 2)}</div></div>
   </div>
-  <div class="card"><h3>단계별 비교 (같은 날 14:00 → 15:20, 상위 5 비용 차감 평균)</h3>${tbl(Object.fromEntries(Object.entries(p.by_stage || {}).map(([k, v]) => [STAGE_LABEL[k] || k, v])), [['예측 수', v => v.n], ['방향 적중률', v => hitStr(v.hit)], ['Brier', v => num(v.brier, 4)], ['상위5 순수익(종가)', v => spct(v.topk_avg_net_close, 2)]])}</div>
+  <div class="card"><h3>단계별 비교 (같은 날 14:00 → 15:20, 상위 5 비용 차감 평균)</h3>${tbl(Object.fromEntries(Object.entries(p.by_stage || {}).map(([k, v]) => [k === 'LAUNCH' ? '앱 실행 분석' : stageLabel(k), v])), [['예측 수', v => v.n], ['방향 적중률', v => hitStr(v.hit)], ['Brier', v => num(v.brier, 4)], ['상위5 순수익(종가)', v => spct(v.topk_avg_net_close, 2)]])}</div>
   <div class="grid">
     <div class="card"><h3>상승확률 Calibration</h3><canvas id="cal"></canvas></div>
     <div class="card"><h3>갭 상승 확률 Calibration</h3><canvas id="cal2"></canvas></div>

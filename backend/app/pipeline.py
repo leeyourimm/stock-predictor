@@ -14,7 +14,7 @@ from datetime import date, datetime, time, timedelta
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .calendar_kr import is_trading_day, next_trading_day
@@ -36,6 +36,28 @@ log = logging.getLogger("pipeline")
 SYNTH = "SYNTHETIC(TEST ONLY)"
 STAGES = {s[0]: {"time": s[1], "snapshot": s[2], "size": s[3]} for s in settings.stages}
 STAGE_ORDER = [s[0] for s in settings.stages]
+ONDEMAND_PREFIX = "L"                 # 앱 실행 시 분석: 단계명 L{HHMM}
+ONDEMAND_CUTOFF = time(15, 30)        # 종가 단일가 주문 마감 — 이후에는 오늘 Overnight 매수 불가
+
+
+def is_final(stage: str) -> bool:
+    """후보를 확정하는 단계: 고정 일정의 최종 단계 또는 앱 실행 시 분석."""
+    return stage == settings.final_stage or stage.startswith(ONDEMAND_PREFIX)
+
+
+def stage_key(stage: str) -> int:
+    return STAGE_ORDER.index(stage) if stage in STAGE_ORDER else 100 + int(stage[1:] or 0)
+
+
+def official_finals(df: pd.DataFrame) -> pd.DataFrame:
+    """거래일마다 공식 확정 예측 1회만 남긴다 (같은 날 여러 번 실행했다면 가장 늦은 실행). 성과 이중 집계 방지."""
+    if df.empty:
+        return df
+    f = df[df.stage.map(is_final)]
+    if f.empty:
+        return f
+    last = f.groupby("trade_date").stage.agg(lambda x: max(x, key=stage_key))
+    return f[f.stage.values == f.trade_date.map(last).values]
 
 
 # ------------------------------------------------------------------ 수집
@@ -146,9 +168,9 @@ def gate_edge(ch) -> dict:
 
 # ------------------------------------------------------------------ 단계별 분석
 def run_stage(session: Session, stage: str, T: date | None = None, data: PITData | None = None,
-              use_claude: bool = True, explain_top: int = 10) -> PredictionRun:
+              use_claude: bool = True, explain_top: int = 10, as_of: datetime | None = None) -> PredictionRun:
     T = T or now_kst().date()
-    as_of = datetime.combine(T, STAGES[stage]["time"])
+    as_of = as_of or datetime.combine(T, STAGES[stage]["time"])
     existing = session.execute(select(PredictionRun).where(PredictionRun.trade_date == T,
                                                            PredictionRun.stage == stage)).scalar()
     if existing:
@@ -163,7 +185,7 @@ def run_stage(session: Session, stage: str, T: date | None = None, data: PITData
         if not is_trading_day(T):
             raise ValueError(f"{T} 는 휴장일")
     target = next_trading_day(T, data.trading_dates() if is_synth else None)
-    final = stage == settings.final_stage
+    final = is_final(stage)
 
     fs = build_features(view)
     if fs.table.empty:
@@ -171,13 +193,13 @@ def run_stage(session: Session, stage: str, T: date | None = None, data: PITData
     regime = classify(fs.market)
     ch = champion(session) or ensure_initial(session)
     model, edge = Model(ch.weights), gate_edge(ch)
-    universe = stage_universe(session, T, stage)
+    universe = stage_universe(session, T, stage) if stage in STAGES else None
     res = predict(fs, regime, model, edge, universe=universe, final=final)
     X = res.attrs["features"]
     gate = res.attrs["gate"]
     cands = res[res.is_candidate].sort_values("rank")
     parent = None
-    i = STAGE_ORDER.index(stage)
+    i = STAGE_ORDER.index(stage) if stage in STAGE_ORDER else 0
     if i:
         prev = session.execute(select(PredictionRun.run_id).where(PredictionRun.trade_date == T,
                                                                   PredictionRun.stage == STAGE_ORDER[i - 1])).scalar()
@@ -240,6 +262,44 @@ def run_stage(session: Session, stage: str, T: date | None = None, data: PITData
     session.commit()
     log.info("%s %s 저장: %s (%d종목, 후보 %d, 게이트 %s)", T, stage, run_id, len(res), len(cands), gate["ok"])
     return run
+
+
+def run_ondemand(session: Session, now: datetime | None = None, data: PITData | None = None,
+                 use_claude: bool = True) -> tuple[PredictionRun | None, str]:
+    """앱을 실행한 시점(as_of = 지금)까지 공개된 데이터로 오늘 Overnight 후보를 확정 분석한다.
+    거래일 15:30(종가 단일가 주문 마감) 전에만 생성. 같은 날 여러 번 실행하면 모두 불변 기록되고,
+    성과 집계에는 그날 마지막 실행만 쓰인다(official_finals)."""
+    now = (now or now_kst()).replace(second=0, microsecond=0)
+    T = now.date()
+    synth = data is not None and bool(data.bars_long.source.eq(SYNTH).any())
+    if not synth and not is_trading_day(T):
+        return None, f"오늘({T})은 휴장일입니다. 다음 거래일 15:30 전에 실행하면 그날 매수 후보를 분석합니다."
+    if now.time() >= ONDEMAND_CUTOFF:
+        return None, ("오늘 장 마감(15:30) 이후라 오늘 매수할 후보는 분석하지 않습니다. "
+                      "채점·데이터 갱신은 끝났고, 다음 거래일 15:30 전에 실행하면 새 후보를 분석합니다.")
+    stage, as_of = f"{ONDEMAND_PREFIX}{now:%H%M}", now
+    if not synth:
+        if settings.kis_app_key and now.time() >= time(9, 0):
+            try:
+                from .collectors import kis
+                kis.collect_index_snapshot(session)
+                kis.collect_snapshot(session, [i.ticker for i in session.query(Instrument).all()])
+            except Exception as e:  # noqa: BLE001
+                log.warning("장중 시세 수집 실패 (장중 지표 없이 진행): %s", e)
+        as_of = now_kst()        # 방금 수집한 시세까지 포함 (그 이후 데이터는 없음)
+    run = run_stage(session, stage, T, data, use_claude=use_claude, as_of=as_of)
+    return run, run.summary.get("no_candidate_message") or f"후보 {len(run.summary.get('candidate_tickers', []))}종목"
+
+
+def catch_up(session: Session, now: datetime | None = None) -> dict:
+    """앱 실행 시: 마지막 수집일 이후 확정된 데이터를 모으고, 결과가 나온 예측을 채점한다."""
+    now = now or now_kst()
+    last = session.execute(select(func.max(DailyBar.date))).scalar()
+    end = now.date() if now.time() >= time(18, 30) else now.date() - timedelta(days=1)
+    start = (last + timedelta(days=1)) if last else now.date() - timedelta(days=400)
+    if start <= end:
+        collect(session, start, end)
+    return run_grading(session, now)
 
 
 def run_day(session: Session, T: date, data: PITData | None = None, use_claude: bool = False) -> list[PredictionRun]:
@@ -309,7 +369,7 @@ def run_grading(session: Session, now: datetime | None = None, use_claude: bool 
                         **{f: vals.get(f) for f in FEATURE_NAMES},
                         "open_ret": oc["open_ret"], "high_ret": oc["high_ret"], "low_ret": oc["low_ret"],
                         "close_ret": r, "_synth": runs[p.run_id].is_synthetic if p.run_id in runs else False})
-        analyze = p.stage == settings.final_stage and (p.is_candidate or (p.rank and p.rank <= 20)) and \
+        analyze = is_final(p.stage) and (p.is_candidate or (p.rank and p.rank <= 20)) and \
             (result == "FAILURE" or (p.is_candidate and oc["net_close"] <= 0))
         if analyze:
             i = inst.get(p.ticker)
@@ -340,15 +400,16 @@ def update_live_edge(session: Session, sdf: pd.DataFrame) -> None:
     ch = champion(session)
     if not ch:
         return
-    fin = session.execute(select(Prediction.trade_date, Prediction.ticker, Prediction.rank, Prediction.strategy_version)
-                          .where(Prediction.stage == settings.final_stage, Prediction.rank.is_not(None),
-                                 Prediction.rank <= settings.max_final_picks,
-                                 Prediction.trade_date.in_(sorted(set(sdf.trade_date))))).all()
-    picks = {(d, t) for d, t, _, v in fin if v == ch.version}
+    fin = pd.DataFrame(session.execute(
+        select(Prediction.trade_date, Prediction.stage, Prediction.ticker, Prediction.strategy_version)
+        .where(Prediction.rank.is_not(None), Prediction.rank <= settings.max_final_picks,
+               Prediction.trade_date.in_(sorted(set(sdf.trade_date))))).all(),
+        columns=["trade_date", "stage", "ticker", "strategy_version"])
+    fin = official_finals(fin)
+    picks = {(d, st, t) for d, st, t, v in fin.itertuples(index=False) if v == ch.version}
     if not picks or not (ch.weights or {}).get("n_train"):
         return
-    s = sdf[sdf.stage == settings.final_stage]
-    s = s[[(d, t) in picks for d, t in zip(s.trade_date, s.ticker)]]
+    s = sdf[[(d, st, t) in picks for d, st, t in zip(sdf.trade_date, sdf.stage, sdf.ticker)]]
     daily = s.groupby("trade_date").close_ret.mean() - settings.round_trip_cost
     ed = dict(ch.calibration.get("edge_daily", {}))
     ed.update({str(k): float(v) for k, v in daily.items()})
@@ -360,7 +421,7 @@ def snapshot_performance(session: Session, d: date) -> dict:
     g = graded_frame(session)
     if g.empty:
         return {}
-    fin = g[g.stage == settings.final_stage]
+    fin = official_finals(g)
     m = prediction_metrics(fin if not fin.empty else g)
     m["overnight"] = overnight_summary(fin, settings.max_final_picks, settings.round_trip_cost)
     m["by_stage"] = {s: prediction_metrics(gg).get("overall") for s, gg in g.groupby("stage")}

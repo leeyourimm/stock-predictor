@@ -35,10 +35,18 @@ python -m app.cli init-db
 python -m app.cli collect --start 2025-01-01 --end 2026-10-02     # 과거 일봉·수급·지수·공시 적재
 python -m app.cli import-intraday --csv minute_bars.csv          # (선택) 과거 분봉이 있으면 단계별 스냅샷 생성
 python -m app.cli bootstrap                                       # 워크포워드 백테스트 → v1 모델과 OOS 우위 기록
-python -m app.scheduler                                           # 매일 자동 실행
+python -m app.cli launch                                          # 앱 실행 시 분석 (밀린 수집·채점 → 지금 시점 분석)
 uvicorn app.api.main:app --port 8000                              # http://localhost:8000
 ```
-수동 실행: `python -m app.cli stage S1400|S1430|S1500|S1510|S1520 | grade | reevaluate | study | backtest --exit open|close | verify`
+맥에서는 `bash start_real.command` 한 번이면 위 과정을 모두 처리한다 (처음 1회만 과거 데이터 수집·초기 학습).
+
+### 분석 시점: 앱을 켤 때마다
+- 켤 때마다 밀린 확정 데이터 수집 → 결과가 나온 예측 채점 → (7일마다) 전략 재평가 → **지금 시점까지 공개된 데이터로** 오늘 후보 분석.
+- 거래일 15:30(종가 단일가 주문 마감) 전에 켰을 때만 오늘 매수 후보를 만든다. 이후·휴장일에는 갱신·채점만 한다.
+- 단계명은 실행 시각 `L{HHMM}`. 같은 날 여러 번 실행하면 모두 불변 기록되고, 성과 집계에는 그날 마지막 실행만 쓴다.
+- 화면의 "지금 다시 분석" 버튼도 같은 동작. 고정 일정(14:00~15:20 5단계, `python -m app.scheduler`)도 그대로 쓸 수 있다.
+
+수동 실행: `python -m app.cli launch | stage S1400|S1430|S1500|S1510|S1520 | grade | reevaluate | study | backtest --exit open|close | verify`
 
 ## 합성 데이터 데모 (네트워크 없이 파이프라인 검증)
 ```bash

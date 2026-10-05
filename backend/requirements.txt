@@ -9,3 +9,6 @@ pykrx>=1.0.47
 finance-datareader>=0.9.90
 yfinance>=0.2.40
 pytest>=8
+lxml>=5
+html5lib>=1.1
+beautifulsoup4>=4.12
