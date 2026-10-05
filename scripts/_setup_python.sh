@@ -5,12 +5,14 @@ CANDS=()
 for c in python3.13 python3.12 python3.11 python3.10 python3; do
   for p in /Library/Frameworks/Python.framework/Versions/*/bin/$c "$(command -v $c 2>/dev/null)" /opt/homebrew/bin/$c /usr/local/bin/$c; do
     [ -x "$p" ] || continue
-    "$p" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null || continue
+    # 버전 3.10+ 이고, 맥에서 macOS 버전을 읽을 수 있어야 함 (Homebrew Python 의 pyexpat 가 깨지면 pip 가 동작하지 않음)
+    "$p" -c 'import sys, platform, pyexpat, ssl; ok = sys.version_info >= (3, 10) and (sys.platform != "darwin" or platform.mac_ver()[0]); sys.exit(0 if ok else 1)' 2>/dev/null || continue
     case " ${CANDS[*]} " in *" $p "*) ;; *) CANDS+=("$p") ;; esac
   done
 done
 if [ ${#CANDS[@]} -eq 0 ]; then
-  echo "Python 3.10 이상이 필요합니다. 열리는 페이지에서 macOS용 Python 을 설치한 뒤 다시 실행하세요."
+  echo "사용할 수 있는 Python 3.10 이상이 없습니다 (설치돼 있어도 손상된 경우 포함)."
+  echo "열리는 python.org 페이지에서 'Download Python 3.12.x' (macOS 64-bit universal2 installer) 를 받아 설치한 뒤 다시 실행하세요."
   open https://www.python.org/downloads/macos/ 2>/dev/null
   return 1
 fi
