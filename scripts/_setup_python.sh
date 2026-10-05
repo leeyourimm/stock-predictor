@@ -32,7 +32,11 @@ if [ ! -f .venv/.installed ]; then
       || { echo "pip 설치 실패 — 이 화면을 Claude 에게 보여주세요"; rm -rf .venv; return 1; }
   fi
   .venv/bin/python -m pip install -q --upgrade pip
+fi
+# requirements.txt 가 바뀌었으면(업데이트 후) 새 패키지만 추가 설치
+if ! cmp -s requirements.txt .venv/.installed; then
+  echo "필요한 패키지를 설치/갱신합니다…"
   .venv/bin/python -m pip install -q -r requirements.txt || { echo "패키지 설치 실패 — 이 화면을 Claude 에게 보여주세요"; return 1; }
-  touch .venv/.installed
+  cp requirements.txt .venv/.installed
 fi
 PY="$(pwd)/.venv/bin/python"
