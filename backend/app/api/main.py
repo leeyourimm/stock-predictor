@@ -4,14 +4,17 @@
 """
 from __future__ import annotations
 
+import base64
+import hmac
 import json
+import os
 import threading
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import desc, func, select
@@ -33,6 +36,28 @@ from ..strategy.manager import champion, load_samples
 init_db(engine)
 app = FastAPI(title="KR Overnight Predictor", version="0.2.0")
 FRONTEND = Path(__file__).resolve().parents[3] / "frontend"
+SITE_PASSWORD = os.getenv("SITE_PASSWORD", "")   # 설정 시 사이트 전체에 비밀번호(HTTP Basic, 아이디는 아무거나)
+
+
+@app.middleware("http")
+async def _password_gate(request: Request, call_next):
+    if not SITE_PASSWORD or request.url.path == "/api/health":
+        return await call_next(request)
+    auth = request.headers.get("authorization", "")
+    if auth.startswith("Basic "):
+        try:
+            pw = base64.b64decode(auth[6:]).decode("utf-8").split(":", 1)[1]
+        except Exception:  # noqa: BLE001
+            pw = ""
+        if hmac.compare_digest(pw.encode(), SITE_PASSWORD.encode()):
+            return await call_next(request)
+    return Response("비밀번호가 필요합니다", status_code=401, headers={"WWW-Authenticate": 'Basic realm="predictor"'},
+                    media_type="text/plain; charset=utf-8")
+
+
+@app.get("/api/health")
+def health():
+    return {"ok": True}
 
 with get_session() as _s:   # 서버 재시작으로 중단된 백테스트 표시
     for _b in _s.execute(select(BacktestRun)).scalars():

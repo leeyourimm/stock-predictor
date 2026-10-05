@@ -1,0 +1,31 @@
+# Render Blueprint — 대시보드에서 New + → Blueprint → 이 저장소 선택
+services:
+  - type: web
+    name: kr-overnight-predictor
+    runtime: docker
+    region: singapore
+    plan: starter            # 항상 켜짐 (무료 플랜은 잠들어 자동 분석이 멈춤)
+    healthCheckPath: /api/health
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      - key: KRX_ID
+        sync: false
+      - key: KRX_PW
+        sync: false
+      - key: DART_API_KEY
+        sync: false
+      - key: KIS_APP_KEY
+        sync: false
+      - key: KIS_APP_SECRET
+        sync: false
+      - key: ECOS_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SITE_PASSWORD
+        sync: false
