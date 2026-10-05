@@ -1,0 +1,51 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>종목 상세 · KR Overnight Predictor</title><link rel="stylesheet" href="/static/style.css">
+<script src="/static/vendor/chart.umd.js"></script><script src="/static/common.js"></script></head>
+<body><main id="m">불러오는 중…</main>
+<script>
+nav('');
+const t = new URLSearchParams(location.search).get('t');
+(async () => {
+  const d = await api('/api/stocks/' + encodeURIComponent(t)), L = d.latest, i = d.instrument;
+  const v = L?.features_snapshot?.values || {}, un = L?.features_snapshot?.unavailable || {};
+  const synth = d.bars.some(b => b.source.startsWith('SYNTHETIC'));
+  const fac = L ? Object.entries(L.factor_scores || {}).map(([g, f]) => `<div class="card"><h3>${esc(f.label)} <b class="${f.score > 0 ? 'up' : f.score < 0 ? 'down' : ''}">${f.score > 0 ? '+' : ''}${f.score}</b></h3>
+     ${f.items.map(x => `<div class="factor"><span>${esc(x.label)}${x.value != null ? ` <span class="muted">(${x.value})</span>` : ''}</span><b>${x.points > 0 ? '+' : ''}${x.points}</b></div>`).join('') || '<span class="muted">해당 신호 없음</span>'}</div>`).join('') : '';
+  const kv = rows => `<table>${rows.map(([k, x]) => `<tr><td class="muted">${k}</td><td>${x}</td></tr>`).join('')}</table>`;
+  const stages = d.today_stages.map(p => `<tr><td>${STAGE_LABEL[p.stage] || p.stage}</td><td>${num(p.price, 0)}</td><td>${pct(p.p_up)}</td><td>${spct(p.expected_net_return, 2)}</td><td>${pct(p.p_gap_up, 0)}</td><td>${pct(p.p_high_hit, 0)}</td><td>${conf(p.confidence)}</td><td>${p.rank ?? '-'}</td><td>${p.is_candidate ? '<b class="up">후보</b>' : '-'}</td></tr>`).join('');
+  $('#m').innerHTML = `${synthBanner(synth)}
+  <div class="card"><div class="big">${esc(i.name)} <span class="muted">${i.ticker} · ${i.market} · ${esc(i.sector || '업종 미분류')}</span></div>
+    <div>거래정지: ${i.is_halted == null ? '확인 불가' : i.is_halted ? '예' : '아니오'} · 관리종목: ${i.is_admin_issue == null ? '확인 불가' : i.is_admin_issue ? '예' : '아니오'} <span class="muted">(${esc(i.status_source || '')})</span></div></div>
+  ${L ? `<div class="grid">
+    <div class="card"><h3>${STAGE_LABEL[L.stage] || L.stage} 기준 · 다음 거래일(${L.target_date}) Overnight</h3>
+      <div class="big">상승확률 <span class="up">${pct(L.p_up)}</span> ${L.is_candidate ? '<span class="badge">매수 후보</span>' : ''}</div>
+      <div>예상 수익률(종가, 비용 차감) <b>${spct(L.expected_net_return, 2)}</b> <span class="muted">(비용 전 ${spct(L.expected_return, 2)})</span></div>
+      <div>예상 상승범위(장중 최대) ${rng(L.up_med, L.up_p80)} · 예상 하락범위 ${rng(L.down_med, L.down_p20)}</div>
+      <div>갭 상승 가능성 ${pct(L.p_gap_up)} · 장중 고가 +2% 도달 가능성 ${pct(L.p_high_hit)}</div>
+      <div>종가 변동 범위(80%) ${rng(L.range_low, L.range_high)}</div>
+      <div>Confidence ${conf(L.confidence)} <span class="muted">${esc(L.confidence_reason || '')}</span></div>
+      <div class="muted">기준 가격 ${num(L.price, 0)} (${esc(L.price_source)}) · 전략 ${L.strategy_version} · 데이터 완전성 ${pct(L.data_completeness, 0)} · 생성 ${L.created_at}</div></div>
+    <div class="card"><h3>상승 근거</h3>${factorBadges(L.factor_scores, true)}<h3 style="margin-top:10px">하락 위험</h3>${factorBadges(L.factor_scores, false)}
+      ${L.risk_flags.map(f => `<span class="badge">${esc(f.label)}</span>`).join('')}
+      <h3 style="margin-top:10px">데이터 없음 항목</h3>${Object.entries(un).map(([k, x]) => `<span class="badge">${k}: ${esc(x)}</span>`).join('') || '<span class="muted">없음</span>'}</div>
+    <div class="card"><h3>이 종목 과거 성적 (15:20 확정 기준)</h3><div class="big">${d.record.hit_rate == null ? '<span class="muted">표본 없음</span>' : pct(d.record.hit_rate)}</div>
+      <div class="muted">방향 적중률 · 채점 ${d.record.n_graded}건 · 평균 순수익(종가) ${spct(d.record.avg_net_close, 2)}</div></div>
+  </div>
+  <div class="card"><h3>오늘 단계별 평가</h3><table><tr><th>단계</th><th>가격</th><th>상승확률</th><th>기대수익(순)</th><th>갭상승</th><th>고가+2%</th><th>Conf</th><th>순위</th><th></th></tr>${stages}</table></div>
+  <div class="card"><h3>AI 설명</h3><div>${esc(L.explanation || '설명 없음 (상위 종목만 생성)')}</div><div class="muted" style="font-size:12px">설명은 코드가 계산한 숫자만 입력으로 생성하며, 확률 계산에는 관여하지 않습니다.</div></div>
+  <div class="grid">${fac}</div>` : '<div class="card">예측 기록 없음</div>'}
+  <div class="card"><h3>가격 차트 (출처: ${esc(d.bars.at(-1)?.source || '-')})</h3><canvas id="c"></canvas></div>
+  <div class="grid">
+    <div class="card"><h3>장중 흐름 (분석 시점)</h3>${kv([['당일 등락률', spct(v.intraday_ret, 2)], ['시가 대비', spct(v.ret_since_open, 2)], ['당일 시가 갭', spct(v.gap_today, 2)], ['VWAP 대비', spct(v.vwap_gap, 2)], ['당일 고가 대비', spct(v.dist_day_high, 2)], ['당일 범위 내 위치', num(v.day_range_pos, 2)], ['전일 고가 돌파', v.broke_prev_high == null ? '<span class="muted">데이터 없음</span>' : v.broke_prev_high ? '예' : '아니오'], ['거래대금 페이스', num(v.value_pace, 2)], ['14:00 이후 모멘텀', spct(v.mom_since_first, 2)], ['장후반 거래 강도 변화', num(v.late_volume_accel, 2)], ['시장 대비 당일 강도', spct(v.rel_market_intraday, 2)]])}</div>
+    <div class="card"><h3>기술적 분석</h3>${kv([['RSI(14)', num(v.rsi14, 1)], ['MACD hist', num(v.macd_hist, 3)], ['볼린저 %B', num(v.bb_pctb, 2)], ['ATR%', pct(v.atr_pct)], ['20일 변동성', pct(v.vol20)], ['20일선 이격', spct(v.dist_ma20)], ['1/5/20/60일 수익률', `${spct(v.ret1)} ${spct(v.ret5)} ${spct(v.ret20)} ${spct(v.ret60)}`], ['전일 거래량 비율', num(v.volume_ratio, 2)], ['연속 상승/하락', num(v.streak, 0)]])}</div>
+    <div class="card"><h3>수급 (20일 평균 거래대금 대비)</h3>${kv([['외국인 1일', spct(v.foreign_1)], ['외국인 5일', spct(v.foreign_5)], ['외국인 20일', spct(v.foreign_20)], ['기관 5일', spct(v.inst_5)], ['개인 5일', spct(v.indiv_5)], ['공매도 비중 5일', pct(v.short_ratio_5)], ['프로그램 매매', '<span class="muted">데이터 없음</span>']])}</div>
+    <div class="card"><h3>시장/업종</h3>${kv([['업종 상대강도(5일)', spct(v.sector_rel5)], ['업종 대비 종목', spct(v.stock_rel_sector5)], ['KOSPI 당일', spct(v.m_kospi_intraday)], ['KOSPI 5일', spct(v.m_kospi_ret5)], ['S&P500 전일', spct(v.m_spx_ret1)], ['나스닥 전일', spct(v.m_nasdaq_ret1)], ['VIX', num(v.m_vix, 1)], ['원/달러 5일', spct(v.m_usdkrw_chg5)], ['Risk-on', num(v.m_risk_on, 3)], ['미국 선물(장중)', '<span class="muted">데이터 없음</span>']])}</div>
+    <div class="card"><h3>공시/뉴스</h3>${d.disclosures.map(x => `<div>${x.rcept_dt} ${esc(x.report_nm)} <span class="muted">${esc(x.source)}</span></div>`).join('') || '<span class="muted">공시 데이터 없음</span>'}<div class="muted">뉴스 sentiment: 데이터 없음 (Phase 3)</div></div>
+  </div>
+  <div class="card"><h3>과거 예측 기록 (15:20 확정) · 다음날 실제 결과</h3><table><tr><th>예측일</th><th>상승확률</th><th>기대(순)</th><th>Conf</th><th>후보</th><th>진입</th><th>시가</th><th>장중최대</th><th>장중최저</th><th>종가</th><th>순수익(종가)</th><th>결과</th></tr>
+    ${d.history.map(h => { const o = h.outcome; return `<tr><td>${h.trade_date}</td><td>${pct(h.p_up)}</td><td>${spct(h.expected_net_return, 2)}</td><td>${conf(h.confidence)}</td><td>${h.is_candidate ? '<b class="up">후보</b>' : '-'}</td>${o ? `<td class="muted">${num(o.entry_price, 0)} ${esc(o.entry_basis || '')}</td><td>${spct(o.open_return, 2)}</td><td>${spct(o.high_return, 2)}</td><td>${spct(o.low_return, 2)}</td><td>${spct(o.close_return, 2)}</td><td>${spct(o.net_close_return, 2)}</td><td class="${o.result}">${o.result}${o.trade_result ? ' / ' + o.trade_result : ''}</td>` : '<td colspan=7 class="muted">채점 대기</td>'}</tr>`; }).join('')}</table></div>
+  <div class="card"><h3>실패 원인 분석</h3>${d.errors.map(e => `<div>${e.trade_date} <b>${e.primary_cause}</b> ${e.tags.map(x => `<span class="badge">${x}</span>`).join('')} ${e.llm_explanation ? '<div class="muted">' + esc(e.llm_explanation) + '</div>' : ''}</div>`).join('') || '<span class="muted">기록 없음</span>'}</div>`;
+  const b = d.bars;
+  new Chart($('#c'), {type: 'line', data: {labels: b.map(x => x.date), datasets: [{label: '종가', data: b.map(x => x.close), borderColor: css('--accent'), pointRadius: 0, borderWidth: 1.5}]}, options: {plugins: {legend: {display: false}}}});
+})().catch(e => $('#m').innerHTML = `<div class="card">오류: ${esc(e.message)}</div>`);
+</script></body></html>

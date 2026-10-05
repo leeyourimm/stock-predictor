@@ -1,0 +1,53 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>백테스트 · KR Overnight Predictor</title><link rel="stylesheet" href="/static/style.css">
+<script src="/static/vendor/chart.umd.js"></script><script src="/static/common.js"></script></head>
+<body><main>
+<div class="card"><h3>Overnight 워크포워드 백테스트 (당시 공개 데이터만 사용, 과거 시점마다 재학습)</h3>
+  시작 <input id="start" type="date"> 종료 <input id="end" type="date"> 상위 K <input id="k" type="number" value="5" style="width:60px">
+  청산 <select id="exit"><option value="close">다음날 종가</option><option value="open">다음날 시가</option></select>
+  수수료(bp,편도) <input id="fee" type="number" value="1.5" step="0.1" style="width:70px"> 거래세(bp) <input id="tax" type="number" value="18" style="width:70px">
+  슬리피지(bp,편도) <input id="slip" type="number" value="10" style="width:70px"> <button id="go">실행</button> <span id="st" class="muted"></span>
+  <div class="muted">매수: 15:20 가격으로 종가 단일가 매수 (과거 장중 시세가 없으면 당일 종가, 장중 피처는 '데이터 없음'). 모델은 각 날짜 이전에 결과가 확정된 표본으로만 학습합니다.</div></div>
+<div class="card"><h3>최근 실행</h3><div id="list"></div></div><div id="res"></div></main>
+<script>
+nav('backtest');
+async function list() {
+  const l = await api('/api/backtests');
+  $('#list').innerHTML = `<table><tr><th>ID</th><th>생성</th><th>상태</th><th>파라미터</th></tr>${l.map(b => `<tr class="click" onclick="show(${b.id})"><td>${b.id}</td><td>${b.created_at.slice(0, 19)}</td><td>${b.status}${b.is_synthetic ? ' <span class="badge">SYNTHETIC</span>' : ''}</td><td class="muted">${esc(JSON.stringify(b.params))}</td></tr>`).join('')}</table>`;
+}
+const card = (h, big, sub) => `<div class="card"><h3>${h}</h3><div class="big">${big}</div><div class="muted">${sub}</div></div>`;
+function block(title, t) {
+  if (!t || t.message) return `<div class="card"><h3>${title}</h3><span class="muted">${esc(t?.message || '거래 없음')}</span></div>`;
+  return `<div class="card"><h3>${title}</h3><div class="grid">
+    ${card('누적 수익률 / MDD', spct(t.cumulative_return), `MDD ${spct(t.mdd)}`)}
+    ${card('승률 / Profit Factor', pct(t.win_rate), `PF ${num(t.profit_factor, 2)} · 거래 ${t.n_trades}회 · 보유 ${t.days_in_market}/${t.n_days}일`)}
+    ${card('Sharpe / 거래당 순수익', num(t.sharpe, 2), `평균 ${spct(t.avg_trade_return, 2)} (비용 ${pct(t.cost_per_trade, 2)} 반영)`)}
+    ${card('다음날 경로 (비용 전)', spct(t.avg_close_return, 2), `시가 ${spct(t.avg_open_return, 2)} · 장중최대 ${spct(t.avg_max_intraday_return, 2)} · 장중최저 ${spct(t.avg_max_intraday_loss, 2)} · 갭상승 ${pct(t.gap_up_rate)} · 고가+2% ${pct(t.high_hit_rate)}`)}</div>
+    <div class="grid"><div><h3>국면별</h3><table><tr><th>국면</th><th>일수</th><th>누적</th><th>거래</th><th>승률</th></tr>${Object.entries(t.by_regime || {}).map(([k, v]) => `<tr><td>${k}</td><td>${v.days}</td><td>${spct(v.cum_return)}</td><td>${v.n_trades}</td><td>${pct(v.win_rate)}</td></tr>`).join('')}</table></div>
+    <div><h3>월별</h3><table>${Object.entries(t.monthly || {}).map(([k, v]) => `<tr><td>${k}</td><td>${spct(v)}</td></tr>`).join('')}</table></div></div></div>`;
+}
+async function show(id) {
+  const b = await api('/api/backtests/' + id), m = b.metrics;
+  if (m.status === 'running') { $('#res').innerHTML = '<div class="card">실행 중… (워크포워드 재학습 포함, 수 분 걸릴 수 있음)</div>'; setTimeout(() => show(id), 4000); return; }
+  if (m.status === 'error' || m.message) { $('#res').innerHTML = `<div class="card">${esc(m.error || m.message)}</div>`; return; }
+  const p = m.prediction;
+  $('#res').innerHTML = `${synthBanner(b.is_synthetic)}
+   <div class="grid">${card('OOS 기간', m.oos_days + '일', `후보 없음 ${m.no_candidate_days}일 (현금 보유)`)}
+     ${card('방향 적중률', hitStr(p.overall), `후보 ${hitStr(p.candidates)}`)}
+     ${card('상승확률 Brier', num(p.brier, 4), `기저 ${num(p.base_brier, 4)} · BSS ${num(p.bss, 4)}`)}
+     ${card('갭 / 고가도달 Brier', `${num(p.gap_brier, 4)} / ${num(p.hit_brier, 4)}`, `기저 ${num(p.gap_base_brier, 4)} / ${num(p.hit_base_brier, 4)}`)}</div>
+   <div class="card"><h3>누적 자산곡선 (비용 차감)</h3><canvas id="eq"></canvas></div>
+   ${block('전략 (실제 후보 규칙 · 우위 게이트 포함)', m.trading)}${block('그림자 상위 K (게이트 무시, 참고용)', m.shadow)}
+   <div class="card"><h3>상승확률 Calibration</h3><table><tr><th>구간</th><th>n</th><th>예측</th><th>실제</th></tr>${p.calibration.map(c => `<tr><td>${c.bin}</td><td>${c.n}</td><td>${pct(c.mean_pred)}</td><td>${pct(c.actual_up_rate)}</td></tr>`).join('')}</table></div>
+   <div class="muted">${esc(m.note)}</div>`;
+  const ds = [[m.trading, '전략', css('--accent')], [m.shadow, '그림자 상위 K', css('--muted')]].filter(x => x[0]?.equity_curve);
+  if (ds.length) new Chart($('#eq'), {type: 'line', data: {labels: ds[0][0].equity_curve.map(x => x.date), datasets: ds.map(([t, l, c]) => ({label: l, data: t.equity_curve.map(x => x.equity), borderColor: c, pointRadius: 0, borderWidth: 1.5}))}});
+}
+$('#go').onclick = async () => {
+  const body = {top_k: +$('#k').value, exit: $('#exit').value, fee_bps: +$('#fee').value, tax_bps: +$('#tax').value, slippage_bps: +$('#slip').value};
+  if ($('#start').value) body.start = $('#start').value; if ($('#end').value) body.end = $('#end').value;
+  try { const r = await api('/api/backtests', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)}); $('#st').textContent = '실행 중 #' + r.id; list(); show(r.id); }
+  catch (e) { $('#st').textContent = e.message; }
+};
+list().then(async () => { const l = await api('/api/backtests'); if (l.length) show(l[0].id); });
+</script></body></html>

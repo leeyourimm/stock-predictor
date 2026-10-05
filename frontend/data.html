@@ -1,0 +1,14 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>데이터 상태 · KR Overnight Predictor</title><link rel="stylesheet" href="/static/style.css"><script src="/static/common.js"></script></head>
+<body><main id="m">불러오는 중…</main>
+<script>
+nav('data');
+(async () => {
+  const d = await api('/api/data-status');
+  const keyUse = {KRX: '일봉·수급·종목정보 (필수)', KIS: '장중 시세 14:00~15:20 (필수)', DART: '공시·실적', ECOS: '금리·환율', ANTHROPIC: '설명 생성 (선택)'};
+  $('#m').innerHTML = `<div class="card"><h3>API 키 설정 상태 <span class="muted">(값은 서버에만 있으며 화면에는 설정 여부만 표시)</span></h3><table><tr><th>키</th><th>용도</th><th>상태</th></tr>${Object.entries(d.keys_configured).map(([k, v]) => `<tr><td>${k}</td><td class="muted">${keyUse[k] || ''}</td><td class="${v ? 'SUCCESS' : 'FAILURE'}">${v ? '설정됨' : '미설정'}</td></tr>`).join('')}</table></div>
+  <div class="card"><h3>가격 데이터 출처</h3><table><tr><th>출처</th><th>행</th><th>최신일</th></tr>${d.bar_sources.map(s => `<tr><td>${esc(s.source)}</td><td>${s.rows}</td><td>${s.latest_date}</td></tr>`).join('')}</table></div>
+  <div class="card"><h3>출처 간 불일치 (data_conflicts)</h3>${d.conflicts.length ? `<table><tr><th>종목</th><th>필드</th><th>일자</th><th>A</th><th>B</th><th>차이</th></tr>${d.conflicts.map(c => `<tr><td>${c.entity}</td><td>${c.field}</td><td>${c.date}</td><td>${esc(c.a.join(': '))}</td><td>${esc(c.b.join(': '))}</td><td>${pct(c.rel_diff, 2)}</td></tr>`).join('')}</table>` : '<span class="muted">감지된 불일치 없음</span>'}</div>
+  <div class="card"><h3>최근 수집 로그 (실패/미설정은 값을 만들지 않고 UNAVAILABLE 로 기록)</h3><table><tr><th>시각</th><th>수집기</th><th>대상</th><th>상태</th><th>메시지</th></tr>${d.logs.map(l => `<tr><td>${l.finished_at}</td><td>${l.collector}</td><td>${esc(l.target)}</td><td class="${l.status === 'OK' ? 'SUCCESS' : 'FAILURE'}">${l.status}</td><td class="muted" style="white-space:normal">${esc(l.message || '')}</td></tr>`).join('') || '<tr><td colspan=5 class="muted">기록 없음</td></tr>'}</table></div>`;
+})().catch(e => $('#m').innerHTML = `<div class="card">오류: ${esc(e.message)}</div>`);
+</script></body></html>

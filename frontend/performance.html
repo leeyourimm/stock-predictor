@@ -1,0 +1,55 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>성과·검증 · KR Overnight Predictor</title><link rel="stylesheet" href="/static/style.css">
+<script src="/static/vendor/chart.umd.js"></script><script src="/static/common.js"></script></head>
+<body><main id="m">불러오는 중…</main>
+<script>
+nav('performance');
+const tbl = (obj, cols) => `<table><tr><th></th>${cols.map(c => `<th>${c[0]}</th>`).join('')}</tr>${Object.entries(obj || {}).map(([k, v]) => `<tr><td>${esc(k)}</td>${cols.map(c => `<td>${c[1](v)}</td>`).join('')}</tr>`).join('')}</table>`;
+function onCard(title, r) {
+  if (!r?.n_trades) return `<div class="card"><h3>${title}</h3><span class="muted">거래 없음</span></div>`;
+  const ex = (lbl, m) => m ? `<tr><td>${lbl}</td><td>${spct(m.cumulative_return)}</td><td>${pct(m.win_rate)}</td><td>${num(m.profit_factor)}</td><td>${num(m.sharpe)}</td><td>${spct(m.mdd)}</td></tr>` : '';
+  return `<div class="card"><h3>${title}</h3><div class="big">${spct(r.avg_net_close, 2)} <span class="muted" style="font-size:13px">거래당 순수익(종가 매도) · ${r.n_trades}회</span></div>
+    <div>평균 다음날 시가 ${spct(r.avg_open_return, 2)} · 장중 최대 ${spct(r.avg_max_intraday_return, 2)} · 장중 최저 ${spct(r.avg_max_intraday_loss, 2)} · 종가 ${spct(r.avg_close_return, 2)}</div>
+    <table><tr><th>청산</th><th>누적</th><th>승률</th><th>PF</th><th>Sharpe</th><th>MDD</th></tr>${ex('다음날 종가', r.exit_close)}${ex('다음날 시가', r.exit_open)}</table></div>`;
+}
+const calChart = (id, rows, ylab) => new Chart($(id), {type: 'scatter', data: {datasets: [
+  {label: '실제', data: rows.map(b => ({x: b.mean_pred, y: b.actual_up_rate})), backgroundColor: css('--accent'), pointRadius: rows.map(b => Math.max(3, Math.min(14, Math.sqrt(b.n) / 3)))},
+  {label: '완벽 보정', data: [{x: 0, y: 0}, {x: 1, y: 1}], type: 'line', borderColor: css('--muted'), borderDash: [4, 4], pointRadius: 0}]},
+  options: {scales: {x: {min: 0, max: 1, title: {display: true, text: '예측 확률'}}, y: {min: 0, max: 1, title: {display: true, text: ylab}}}}});
+(async () => {
+  const [p, e, s] = await Promise.all([api('/api/performance'), api('/api/errors'), api('/api/strategies')]);
+  if (p.message) { $('#m').innerHTML = `<div class="card">${p.message}</div>`; return; }
+  const on = p.overnight || {};
+  $('#m').innerHTML = `
+  <div class="card"><h3>기록 무결성 (해시 체인)</h3><span id="integ" class="muted">검증 중…</span>
+    <div class="muted">예측·채점 테이블은 DB 트리거로 UPDATE/DELETE 가 금지되어 있고, 각 행은 이전 행의 해시를 포함합니다.</div></div>
+  <div class="grid">${onCard('확정 매수 후보 (15:20, 비용 차감)', on.candidates)}${onCard('그림자 상위 5 (게이트 무시, 참고용)', on.shadow_topk)}</div>
+  <div class="grid">
+    <div class="card"><h3>방향 적중률 (15:20 기준)</h3><div class="big">${hitStr(p.overall)}</div><div class="muted">${p.period.join(' ~ ')} · ${p.n_days}거래일</div><div>최근 20일 ${hitStr(p.recent_20d)}</div></div>
+    <div class="card"><h3>상위 5 / 10 / 후보 적중률</h3><div>TOP5 ${hitStr(p.top5)}</div><div>TOP10 ${hitStr(p.top10)}</div><div>후보 ${hitStr(p.candidates)}</div></div>
+    <div class="card"><h3>Brier Score</h3><div class="big">${num(p.brier, 4)}</div><div class="muted">기저율 ${num(p.base_brier, 4)} · BSS ${num(p.bss, 4)} (0 이하 = 기저율보다 나을 게 없음)</div>
+      <div class="muted">갭상승 Brier ${num(p.gap_brier, 4)} · 고가+2% Brier ${num(p.hit_brier, 4)}</div></div>
+    <div class="card"><h3>예상 vs 실제 (종가 수익률)</h3><div>전체 ${spct(p.avg_expected_return, 2)} vs ${spct(p.avg_actual_return, 2)}</div><div>TOP10 ${spct(p.top10_avg_expected_return, 2)} vs ${spct(p.top10_avg_actual_return, 2)}</div><div class="muted">TOP10 최대 손실 ${spct(p.max_loss_top10, 2)} · 후보 최대 손실 ${spct(p.max_loss_candidates, 2)}</div></div>
+  </div>
+  <div class="card"><h3>단계별 비교 (같은 날 14:00 → 15:20, 상위 5 비용 차감 평균)</h3>${tbl(Object.fromEntries(Object.entries(p.by_stage || {}).map(([k, v]) => [STAGE_LABEL[k] || k, v])), [['예측 수', v => v.n], ['방향 적중률', v => hitStr(v.hit)], ['Brier', v => num(v.brier, 4)], ['상위5 순수익(종가)', v => spct(v.topk_avg_net_close, 2)]])}</div>
+  <div class="grid">
+    <div class="card"><h3>상승확률 Calibration</h3><canvas id="cal"></canvas></div>
+    <div class="card"><h3>갭 상승 확률 Calibration</h3><canvas id="cal2"></canvas></div>
+    <div class="card"><h3>고가 +2% 도달 확률 Calibration</h3><canvas id="cal3"></canvas></div>
+  </div>
+  <div class="grid">
+    <div class="card"><h3>Confidence별</h3>${tbl(p.by_confidence, [['적중률', hitStr]])}</div>
+    <div class="card"><h3>시장 국면별</h3>${tbl(p.by_regime, [['적중률', hitStr], ['BSS', v => num(v.bss, 4)]])}</div>
+  </div>
+  <div class="card"><h3>실패 원인 (Error Log, ${e.summary.n_failures}건)</h3>${tbl(e.summary.primary_causes, [['건수', v => v.count], ['의미', v => esc(v.label)]])}
+    <h3 style="margin-top:12px">국면별 실패율</h3>${tbl(e.summary.failure_rate_by_regime, [['n', v => v.n], ['실패율', v => pct(v.failure_rate)]])}
+    <h3 style="margin-top:12px">최근 실패</h3><table><tr><th>일자</th><th>종목</th><th>주원인</th><th>태그</th></tr>${e.items.slice(0, 15).map(x => `<tr><td>${x.trade_date}</td><td><a href="/stock.html?t=${x.ticker}">${x.ticker}</a></td><td>${x.primary_cause}</td><td style="white-space:normal">${x.tags.map(t => `<span class="badge">${t}</span>`).join('')}</td></tr>`).join('')}</table></div>
+  <div class="card"><h3>전략 Version History</h3><table><tr><th>버전</th><th>상태</th><th>학습 표본</th><th>OOS 우위 (그림자 상위5, 비용 차감)</th><th>주요 특징 (상승 계수)</th><th>사유</th><th>생성</th></tr>
+    ${s.map(v => `<tr><td>${v.version}${v.parent ? ' ← ' + v.parent : ''}</td><td><span class="badge">${v.status}</span></td><td>${num(v.n_train, 0)}<div class="muted">${(v.train_period || []).join('~')}</div></td>
+      <td>${v.edge?.days ? `${v.edge.days}일 · 일평균 ${spct(v.edge.mean_net, 3)} · t=${num(v.edge.tstat, 2)}` : '<span class="muted">-</span>'}</td>
+      <td style="white-space:normal">${(v.top_features || []).map(f => `<span class="badge">${esc(f.label)} ${f.up > 0 ? '+' : ''}${f.up}</span>`).join('')}</td>
+      <td style="white-space:normal">${esc(v.reason)}</td><td>${v.created_at.slice(0, 16)}</td></tr>`).join('')}</table></div>`;
+  api('/api/integrity').then(integ => $('#integ').outerHTML = integ.ok ? `<span class="SUCCESS">✔ 변조 없음</span> — ${integ.checked}건 검증` : `<span class="FAILURE">✖ 체인 불일치 (id ${integ.broken_at_id})</span>`);
+  calChart('#cal', p.calibration, '실제 상승 비율'); calChart('#cal2', p.gap_calibration || [], '실제 갭상승 비율'); calChart('#cal3', p.hit_calibration || [], '실제 도달 비율');
+})().catch(e => $('#m').innerHTML = `<div class="card">오류: ${esc(e.message)}</div>`);
+</script></body></html>

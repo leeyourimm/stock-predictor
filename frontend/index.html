@@ -1,0 +1,43 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>대시보드 · KR Overnight Predictor</title><link rel="stylesheet" href="/static/style.css">
+<script src="/static/vendor/chart.umd.js"></script><script src="/static/common.js"></script></head>
+<body><main id="m">불러오는 중…</main>
+<script>
+nav('index');
+(async () => {
+  const d = await api('/api/dashboard');
+  if (d.status === 'no_runs') { $('#m').innerHTML = `<div class="card">${d.message}</div>`; return; }
+  const mk = d.market.values || {}, rg = d.market.regime || {}, perf = d.performance, on = perf?.overnight?.candidates, sh = perf?.overnight?.shadow_topk;
+  const stageDone = Object.fromEntries(d.stages.map(s => [s.stage, s]));
+  const timeline = d.stage_plan.map(p => { const s = stageDone[p.stage]; return `<div class="card" style="margin:0;${s ? '' : 'opacity:.45'}"><h3>${STAGE_LABEL[p.stage]}</h3>
+     ${s ? `<div>분석 ${s.n_universe}종목 · 자격 ${s.n_eligible}</div><div>${p.stage === 'S1520' ? (s.n_candidates ? `<b class="up">후보 ${s.n_candidates}종목 확정</b>` : '<b>매수 후보 없음</b>') : `통과 ${s.n_candidates}`}</div>` : `<div class="muted">대상 ${p.size}${p.size === '전체' ? '' : '종목'} · 대기</div>`}</div>`; }).join('');
+  const rows = d.top10.map(p => `<tr class="click" onclick="location='/stock.html?t=${p.ticker}'">
+    <td>${p.rank}</td><td><b>${esc(p.name)}</b> <span class="muted">${p.ticker}</span></td>
+    <td class="up"><b>${pct(p.p_up)}</b></td><td>${spct(p.expected_net_return, 2)}</td><td>${pct(p.p_gap_up, 0)}</td><td>${pct(p.p_high_hit, 0)}</td>
+    <td>${rng(p.up_med, p.up_p80)}</td><td>${rng(p.down_med, p.down_p20)}</td><td>${conf(p.confidence)}</td>
+    <td>${factorBadges(p.factor_scores, true)}</td><td>${factorBadges(p.factor_scores, false)}${p.risk_flags.filter(f => f.code !== 'STATUS_UNKNOWN').map(f => `<span class="badge">${esc(f.label)}</span>`).join('')}</td>
+    <td>${p.is_candidate ? '<b class="up">매수 후보</b>' : '<span class="muted">-</span>'}</td></tr>`).join('');
+  $('#m').innerHTML = `${synthBanner(d.is_synthetic)}
+  <div class="grid">${timeline}</div><div style="height:12px"></div>
+  <div class="grid">
+    <div class="card"><h3>오늘의 시장 상태</h3><div class="big"><span class="badge">${rg.trend}</span><span class="badge">${rg.vol}</span></div>
+      <div class="muted">KOSPI 당일 ${spct(mk.kospi_intraday)} · 20일 ${spct(mk.kospi_ret20)} · 60일 ${spct(mk.kospi_ret60)}</div>
+      <div class="muted">S&P500(전일) ${spct(mk.spx_ret1)} · VIX ${num(mk.vix, 1)} · USD/KRW 5일 ${spct(mk.usdkrw_chg5)} · Risk-on ${num(mk.risk_on, 4)}</div></div>
+    <div class="card"><h3>전략 우위 게이트</h3><div class="big ${d.gate?.ok ? 'SUCCESS' : 'FAILURE'}">${d.gate?.ok ? '통과' : '미통과'}</div><div class="muted">${esc(d.gate?.reason || '')}</div>
+      <div class="muted">게이트 미통과 시 모든 종목 Confidence Low → 매수 후보 없음</div></div>
+    <div class="card"><h3>Overnight 후보 누적 성과 (종가 매도, 비용 차감)</h3>${on?.n_trades ? `<div class="big">${spct(on.avg_net_close, 2)}</div><div class="muted">${on.n_trades}회 · 승률 ${pct(on.exit_close?.win_rate)} · PF ${num(on.exit_close?.profit_factor)} · Sharpe ${num(on.exit_close?.sharpe)} · MDD ${spct(on.exit_close?.mdd)}</div><div class="muted">평균 시가 ${spct(on.avg_open_return, 2)} · 장중최대 ${spct(on.avg_max_intraday_return, 2)} · 종가 ${spct(on.avg_close_return, 2)}</div>` : '<span class="muted">아직 확정 후보 거래 없음</span>'}</div>
+    <div class="card"><h3>그림자 상위${d.top10.length ? 5 : ''} (게이트 무시, 참고)</h3>${sh?.n_trades ? `<div class="big">${spct(sh.avg_net_close, 2)}</div><div class="muted">${sh.n_trades}회 · 승률 ${pct(sh.exit_close?.win_rate)} · Sharpe ${num(sh.exit_close?.sharpe)}</div>` : '<span class="muted">-</span>'}
+      <div class="muted">방향 적중률(최근 20일) ${hitStr(perf?.recent_20d)} · Brier ${num(perf?.brier, 4)} / 기저 ${num(perf?.base_brier, 4)}</div></div>
+  </div>
+  <div class="card"><h3>${STAGE_LABEL[d.stage]} 기준 상위 10 (기대수익 순, 대상일 ${d.target_date})</h3>
+    ${d.is_final && d.no_candidate_message ? `<div class="notice">${d.no_candidate_message}</div>` : ''}
+    ${!d.is_final ? `<div class="muted" style="margin-bottom:8px">아직 최종 단계 전입니다. 15:20 확정 전까지 후보는 바뀔 수 있습니다.</div>` : ''}
+    <table><tr><th>#</th><th>종목</th><th>상승확률</th><th>기대수익(순)</th><th>갭상승</th><th>고가+2%</th><th>예상 상승범위</th><th>예상 하락범위</th><th>Conf</th><th>상승 근거</th><th>하락 위험</th><th></th></tr>${rows}</table>
+    <div class="muted" style="margin-top:8px">왕복 비용 ${pct(d.costs.round_trip, 2)} 반영 (수수료 ${d.costs.fee_bps}bp×2, 세금 ${d.costs.tax_bps}bp, 슬리피지 ${d.costs.slippage_bps}bp×2). 상승/하락 범위 = 다음날 장중 최대 상승·하락 (중앙값 ~ 80/20분위).</div></div>
+  <div class="card"><h3>최근 거래일별 방향 적중률 (최종 단계)</h3><canvas id="c1"></canvas></div>`;
+  if (perf?.daily?.length) {
+    const days = perf.daily.slice(-20);
+    new Chart($('#c1'), {type: 'bar', data: {labels: days.map(x => x.date), datasets: [{label: '방향 적중률', data: days.map(x => x.hit_rate), backgroundColor: css('--accent')}]}, options: {scales: {y: {min: 0, max: 1}}}});
+  }
+})().catch(e => $('#m').innerHTML = `<div class="card">오류: ${esc(e.message)}</div>`);
+</script></body></html>

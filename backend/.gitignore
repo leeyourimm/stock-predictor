@@ -1,0 +1,7 @@
+.env
+data/*.db*
+__pycache__/
+.pytest_cache/
+.venv/
+data/.bootstrapped
+data/*.log

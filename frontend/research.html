@@ -1,0 +1,30 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>특징 검증 · KR Overnight Predictor</title><link rel="stylesheet" href="/static/style.css"><script src="/static/common.js"></script></head>
+<body><main id="m">불러오는 중…</main>
+<script>
+nav('research');
+const vcls = v => v.startsWith('OOS 유효') ? 'SUCCESS' : v.startsWith('불안정') ? 'FAILURE' : 'muted';
+async function load(live) {
+  $('#m').innerHTML = '불러오는 중…';
+  const r = await api('/api/research' + (live ? '?live=true' : '')), fs = r.feature_study;
+  if (!fs || fs.message) { $('#m').innerHTML = `<div class="card">${esc(fs?.message || '검증 리포트 없음 (전략 v1 생성 후 표시)')}</div>`; return; }
+  const n = v => v == null ? '<span class="muted">-</span>' : (v > 0 ? '+' : '') + v.toFixed(3);
+  const rows = fs.features.map(f => `<tr><td><b>${esc(f.label)}</b> <span class="muted">${f.feature}</span></td><td class="muted">${f.group}</td><td>${pct(f.coverage, 0)}</td>
+    <td>${n(f.ic_in)} <span class="muted">t=${f.t_in ?? '-'}</span></td><td><b>${n(f.ic_oos)}</b> <span class="muted">t=${f.t_oos ?? '-'}</span></td>
+    <td>${f.ic_oos_open == null ? '<span class="muted">-</span>' : `${n(f.ic_oos_open)} <span class="muted">t=${f.t_oos_open ?? '-'}</span>`}</td>
+    <td>${f.quintile_oos?.spread_close != null ? spct(f.quintile_oos.spread_close, 2) : '<span class="muted">-</span>'}</td>
+    <td>${f.quintile_oos?.q5_net_close != null ? spct(f.quintile_oos.q5_net_close, 2) : '<span class="muted">-</span>'}</td>
+    <td class="muted">${Object.entries(f.ic_oos_by_trend || {}).map(([k, v]) => `${k} ${n(v)}`).join(' · ')}</td>
+    <td class="${vcls(f.verdict)}">${esc(f.verdict)}</td></tr>`).join('');
+  const coefs = r.coefficients.slice(0, 20).map(c => `<tr><td>${esc(c.label)}</td><td class="muted">${c.group}</td><td>${n(c.up)}</td><td>${n(c.gap)}</td><td>${n(c.hit)}</td><td>${n(c.ret * 100)}</td></tr>`).join('');
+  $('#m').innerHTML = `<div class="card"><h3>특징별 Out-of-Sample 검증 — "장 마감 전에 이런 종목을 샀을 때 다음날 성과가 좋았는가?"</h3>
+    <div>학습 구간 ${fs.in_sample.join(' ~ ')} · OOS ${fs.out_of_sample.join(' ~ ')} · ${fs.n_days}거래일 · 표본 ${num(fs.n_samples, 0)}</div>
+    <div class="muted">${esc(fs.method)}. 시장 특징(m_)은 일별 시계열 상관. 어떤 특징도 미리 유효하다고 가정하지 않습니다.</div>
+    <button onclick="load(true)" style="margin-top:6px">현재 누적 표본으로 재계산</button> <span class="muted">${live ? '(방금 재계산)' : '(챔피언 전략 생성 시점 리포트)'}</span></div>
+  <div class="card"><table><tr><th>특징</th><th>그룹</th><th>커버리지</th><th>IC 학습</th><th>IC OOS (종가)</th><th>IC OOS (시가)</th><th>OOS 5분위 스프레드</th><th>최상위 분위 순수익</th><th>국면별 OOS IC</th><th>판정</th></tr>${rows}</table></div>
+  <div class="card"><h3>현재 챔피언(${r.champion || '-'}) 모델 계수 상위 20 (표준화 특징 1단위당)</h3>
+    <div class="muted">학습 표본 ${num(r.model?.n_train, 0)} · 기간 ${(r.model?.train_period || []).join(' ~ ')}. 상승/갭/고가도달 = 로지스틱 계수, 기대수익 = 릿지 계수(%p).</div>
+    <table><tr><th>특징</th><th>그룹</th><th>상승</th><th>갭상승</th><th>고가+2%</th><th>기대수익(%p)</th></tr>${coefs}</table></div>`;
+}
+load(false).catch(e => $('#m').innerHTML = `<div class="card">오류: ${esc(e.message)}</div>`);
+</script></body></html>
