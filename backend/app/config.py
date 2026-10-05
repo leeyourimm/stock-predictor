@@ -56,7 +56,9 @@ class Settings:
 
     # 수집 대상: ALL 또는 시가총액 상위 N (전체 시장은 분석 시간이 길어짐)
     universe_markets: tuple[str, ...] = tuple(os.getenv("UNIVERSE_MARKETS", "KOSPI,KOSDAQ").split(","))
-    universe_top_n: int = _i("UNIVERSE_TOP_N", 0)  # 0 = 전체
+    universe_top_n: int = _i("UNIVERSE_TOP_N", 0)  # 0 = 전체 (네이버 소스는 0이면 상위 300)
+    # 일봉·수급 데이터 소스: naver(로그인 불필요, 기본) | krx(pykrx, KRX 데이터 포털 ID/PW 로그인 필요)
+    data_source: str = os.getenv("DATA_SOURCE", "naver").strip().lower()
 
     # Overnight 다단계 분석 일정 (KST). (단계명, 분석시각, 장중 스냅샷 수집시각, 대상 종목 수: 0=전체)
     # 각 단계는 분석시각까지 공개된 데이터만 사용. 15:20 최종 단계가 공식 Overnight 후보.

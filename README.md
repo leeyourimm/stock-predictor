@@ -27,6 +27,12 @@ frontend/                     대시보드 · 종목 상세 · 성과/검증 · 
 backend/tests/                단계별 look-ahead · 불변성 · 해시체인 · Overnight 비용 계산
 ```
 
+## 데이터 소스
+KRX 데이터 포털이 로그인 필수가 되었고 pykrx 는 KRX 일반 회원 ID/PW 로그인만 지원한다(네이버·카카오 간편로그인 계정 불가).
+그래서 기본값은 **네이버 금융**(`DATA_SOURCE=naver`, 로그인 불필요): 시가총액 상위 300종목(`UNIVERSE_TOP_N`)의 일봉·외국인/기관 순매매·지수,
+실행 시점 현재가. 거래대금은 종가×거래량, 수급 금액은 순매매 수량×종가 근사이며 개인 순매수·공매도·업종 분류는 "데이터 없음".
+KIS 키가 있으면 장중 현재가는 KIS 공식 API 를 쓴다. KRX ID/PW 가 있으면 `DATA_SOURCE=krx`.
+
 ## 실데이터로 운영
 ```bash
 cd backend && pip install -r requirements.txt

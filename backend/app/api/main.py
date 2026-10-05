@@ -371,7 +371,7 @@ def data_status():
         sources = s.execute(select(DailyBar.source, func.count(), func.max(DailyBar.date)).group_by(DailyBar.source)).all()
         keys = {"KRX": bool(settings.krx_id), "KIS": bool(settings.kis_app_key), "DART": bool(settings.dart_api_key),
                 "ECOS": bool(settings.ecos_api_key), "ANTHROPIC": bool(settings.anthropic_api_key)}
-        return {"keys_configured": keys,
+        return {"keys_configured": keys, "data_source": settings.data_source,
                 "logs": [{**l, "finished_at": str(l["finished_at"])} for l in logs],
                 "bar_sources": [{"source": a, "rows": b, "latest_date": str(c)} for a, b, c in sources],
                 "conflicts": [{"entity": c.entity, "field": c.field, "date": str(c.data_date), "a": [c.source_a, c.value_a],

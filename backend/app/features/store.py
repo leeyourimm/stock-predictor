@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..db import DailyBar, DataConflict, Disclosure, IndexBar, Instrument, IntradaySnapshot, InvestorFlow, ShortData
 
-SOURCE_PRIORITY = ["KRX(pykrx)", "KIS Open API", "한국은행 ECOS", "FinanceDataReader", "Yahoo Finance(yfinance)",
+SOURCE_PRIORITY = ["KRX(pykrx)", "KIS Open API", "NAVER 금융", "한국은행 ECOS", "FinanceDataReader", "Yahoo Finance(yfinance)",
                    "SYNTHETIC(TEST ONLY)"]
 
 

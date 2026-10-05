@@ -63,17 +63,20 @@ def official_finals(df: pd.DataFrame) -> pd.DataFrame:
 # ------------------------------------------------------------------ 수집
 def collect(session: Session, start: date, end: date, snapshot: bool = False) -> None:
     """실데이터 수집 (키/네트워크 없으면 각 항목이 CollectionLog 에 UNAVAILABLE 로 남는다)."""
-    from .collectors import dart, ecos, global_markets, kis, krx, secondary
+    from .collectors import dart, ecos, global_markets, kis, krx, naver, secondary
     from .collectors.base import DataUnavailable
-    try:
-        if not session.query(Instrument).count():
-            krx.collect_instruments(session, end)
-        days = krx.trading_days(start, end)
-    except DataUnavailable as e:
-        log.warning("KRX 거래일 조회 불가: %s", e)
-        days = [d for d in pd.date_range(start, end).date if is_trading_day(d)]
-    for d in days:
-        krx.collect_daily(session, d)
+    if settings.data_source == "krx":
+        try:
+            if not session.query(Instrument).count():
+                krx.collect_instruments(session, end)
+            days = krx.trading_days(start, end)
+        except DataUnavailable as e:
+            log.warning("KRX 거래일 조회 불가: %s", e)
+            days = [d for d in pd.date_range(start, end).date if is_trading_day(d)]
+        for d in days:
+            krx.collect_daily(session, d)
+    else:
+        naver.collect_range(session, start, end)
     global_markets.collect_global(session, start - timedelta(days=10), end)
     ecos.collect_ecos(session, start - timedelta(days=10), end)
     dart.collect_disclosures(session, start, end)
@@ -279,11 +282,14 @@ def run_ondemand(session: Session, now: datetime | None = None, data: PITData | 
                       "채점·데이터 갱신은 끝났고, 다음 거래일 15:30 전에 실행하면 새 후보를 분석합니다.")
     stage, as_of = f"{ONDEMAND_PREFIX}{now:%H%M}", now
     if not synth:
-        if settings.kis_app_key and now.time() >= time(9, 0):
+        if now.time() >= time(9, 0):
+            # 장중 현재가: KIS 키가 있으면 공식 API, 없으면 네이버 실시간 시세
+            from .collectors import kis, naver
+            src = kis if settings.kis_app_key else naver
+            tickers = [i.ticker for i in session.query(Instrument).all() if not i.ticker.startswith("IDX:")]
             try:
-                from .collectors import kis
-                kis.collect_index_snapshot(session)
-                kis.collect_snapshot(session, [i.ticker for i in session.query(Instrument).all()])
+                src.collect_index_snapshot(session)
+                src.collect_snapshot(session, tickers)
             except Exception as e:  # noqa: BLE001
                 log.warning("장중 시세 수집 실패 (장중 지표 없이 진행): %s", e)
         as_of = now_kst()        # 방금 수집한 시세까지 포함 (그 이후 데이터는 없음)
